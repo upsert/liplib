@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="liplib",
-    version="0.0.1",
+    version="0.0.3",
     author="upsert",
     author_email="",
     description="Interface module for Lutron Integration Protocol (LIP) over Telnet",
@@ -20,4 +20,5 @@ setuptools.setup(
         "Topic :: Home Automation",
         "Intended Audience :: Developers"
     ],
+    python_requires='>=3.6',
 )
