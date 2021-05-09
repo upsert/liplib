@@ -92,7 +92,8 @@ def _process_scenes(devices, device):
 
 # pylint: disable=too-many-instance-attributes
 class LipServer:
-    """Async class to communicate with a the bridge."""
+    """Async class to communicate with a the bridge. This class is the client,
+    so it should be called LipServerClient but it is not."""
 
     READ_SIZE = 1024
     DEFAULT_USER = b"lutron"
