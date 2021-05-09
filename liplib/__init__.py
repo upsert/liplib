@@ -269,7 +269,7 @@ class LipServer:
             await self.writer.drain()
 
     async def logout(self):
-        """Logout and severe the connect to the bridge."""
+        """Logout and sever the connection to the bridge."""
         async with self._write_lock:
             if self._state != LipServer.State.Opened:
                 return
