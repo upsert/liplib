@@ -1,8 +1,8 @@
 """
-Interface module for Lutron Integration Protocol (LIP) over Telnet.
+Interface module for Lutron Integration Protocol (LIP).
 
-This module connects to a Lutron hub through the Telnet interface which must be
-enabled through the integration menu in the Lutron mobile app.
+This module connects to a Lutron hub through the tcp/23 ("telnet") interface which
+must be enabled through the integration menu in the Lutron mobile app.
 
 Authors:
 upsert (https://github.com/upsert)
@@ -26,74 +26,56 @@ CONF_BUTTONS = "buttons"
 
 _LOGGER = logging.getLogger(__name__)
 
-
-async def async_load_integration_report(fname: str) -> list:
+def load_integration_report(integration_report) -> list:
     """Process a JSON integration report and return a list of devices.
 
     Each returned device will have an 'id', 'name', 'type' and optionally
     a list of button IDs under 'buttons' for remotes
-    and an 'area_name' attribute if the device is assigned
-    to an area.
+    and an 'area_name' attribute if the device is assigned to an area.
+
+    To generate an integration report in the Lutron (Radio Ra2 Select) app,
+    click the gear, then Advanced, then "Send Integration Report."
     """
     devices = []
-    with open(fname, encoding='utf-8') as conf_file:
-        integration_report = json.load(conf_file)
-        # _LOGGER.debug(integration)
-        if "LIPIdList" in integration_report:
-            # lights and switches are in Zones
-            if "Zones" in integration_report["LIPIdList"]:
-                _process_zones(devices, integration_report)
-            # remotes are in Devices, except ID 1 which is the bridge itself
-            if "Devices" in integration_report["LIPIdList"]:
-                for device in integration_report["LIPIdList"]["Devices"]:
-                    # extract scenes from integration ID 1 - the smart bridge
-                    if device["ID"] == 1 and "Buttons" in device:
-                        _process_scenes(devices, device)
-                    elif device["ID"] != 1 and "Buttons" in device:
-                        device_obj = {CONF_ID: device["ID"],
-                                      CONF_NAME: device["Name"],
-                                      CONF_TYPE: "sensor",
-                                      CONF_BUTTONS:
-                                          [b["Number"]
-                                           for b in device["Buttons"]]}
-                        if "Area" in device and "Name" in device["Area"]:
-                            device_obj[CONF_AREA_NAME] = device["Area"]["Name"]
-                        devices.append(device_obj)
-        else:
-            _LOGGER.warning("'LIPIdList' not found in the Integration Report."
-                            " No devices will be loaded.")
-    return devices
+    lipidlist = integration_report.get("LIPIdList")
+    assert lipidlist, integration_report
 
-
-def _process_zones(devices, integration_report):
-    """Process zones and append devices."""
-    for zone in integration_report["LIPIdList"]["Zones"]:
-        # _LOGGER.debug(zone)
+    # lights and switches are in Zones
+    for zone in lipidlist.get("Zones", []):
         device_obj = {CONF_ID: zone["ID"],
                       CONF_NAME: zone["Name"],
                       CONF_TYPE: "light"}
-        if "Area" in zone and "Name" in zone["Area"]:
-            device_obj[CONF_AREA_NAME] = zone["Area"]["Name"]
+        name = zone.get("Area", {}).get("Name", "")
+        if name:
+            device_obj[CONF_AREA_NAME] = name
         devices.append(device_obj)
 
+    # remotes are in Devices, except ID 1 which is the bridge itself
+    for device in lipidlist.get("Devices", []):
+        # extract scenes from integration ID 1 - the smart bridge
+        if device["ID"] == 1:
+            for button in device.get("Buttons", []):
+                if not button["Name"].startswith("Button "):
+                    _LOGGER.info("Found scene %d, %s", button["Number"], button["Name"])
+                    devices.append({CONF_ID: device["ID"],
+                                    CONF_NAME: button["Name"],
+                                    CONF_SCENE_ID: button["Number"],
+                                    CONF_TYPE: "scene"})
+        else:
+            device_obj = {CONF_ID: device["ID"],
+                          CONF_NAME: device["Name"],
+                          CONF_TYPE: "sensor",
+                          CONF_BUTTONS: [b["Number"] for b in device.get("Buttons", [])]}
+            name = device.get("Area", {}).get("Name", "")
+            device_obj[CONF_AREA_NAME] = name
+            devices.append(device_obj)
 
-def _process_scenes(devices, device):
-    """Process scenes and append devices."""
-    for button in device["Buttons"]:
-        if not button["Name"].startswith("Button "):
-            _LOGGER.info(
-                "Found scene %d, %s", button["Number"],
-                button["Name"])
-            devices.append({CONF_ID: device["ID"],
-                            CONF_NAME: button["Name"],
-                            CONF_SCENE_ID: button["Number"],
-                            CONF_TYPE: "scene"})
+    return devices
 
 
 # pylint: disable=too-many-instance-attributes
 class LipServer:
-    """Async class to communicate with a the bridge. This class is the client,
-    so it should be called LipServerClient but it is not."""
+    """Communicate with a Lutron bridge, repeater, or controller."""
 
     READ_SIZE = 1024
     DEFAULT_USER = b"lutron"
@@ -106,20 +88,20 @@ class LipServer:
     class Action(IntEnum):
         """Action values."""
 
-        # Get or Set Zone Level
-        SET = 1
-        # Start Raising
-        RAISING = 2
-        # Start Lowering
-        LOWERING = 3
-        # Stop Raising/Lowering
-        STOP = 4
+        SET      = 1    # Get or Set Zone Level
+        RAISING  = 2    # Start Raising
+        LOWERING = 3    # Start Lowering
+        STOP     = 4    # Stop Raising/Lowering
+
+        PRESET   = 6    # SHADEGRP for Homeworks QS
 
     class Button(IntEnum):
         """Button values."""
 
         PRESS = 3
         RELEASE = 4
+        HOLD = 5         # not returned by Caseta or Radio Ra 2 Select
+        DOUBLETAP = 6    # not returned by Caseta or Radio Ra 2 Select
 
     class State(IntEnum):
         """Connection state values."""
@@ -192,10 +174,12 @@ class LipServer:
                     self._read_buffer = self._read_buffer[match.end():]
                     return match
             else:
+                assert isinstance(value, bytes), value
                 where = self._read_buffer.find(value)
                 if where != -1:
+                    until = self._read_buffer[:where+len(value)]
                     self._read_buffer = self._read_buffer[where + len(value):]
-                    return True
+                    return until
             try:
                 read_data = await self.reader.read(LipServer.READ_SIZE)
                 if not len(read_data):
@@ -220,7 +204,7 @@ class LipServer:
                            int(match.group(2)), int(match.group(3)), \
                            float(match.group(4))
                 except ValueError:
-                    print("Exception in ", match.group(0))
+                    _LOGGER.warning(f"could not parse {match.group(0)}")
         if match is False:
             # attempt to reconnect
             _LOGGER.info("Reconnecting to the bridge %s", self._host)
@@ -248,8 +232,9 @@ class LipServer:
             except OSError as err:
                 _LOGGER.warning("Error writing out to the bridge: %s", err)
 
+
     async def query(self, mode, integration, action):
-        """Query a device to get its current state."""
+        """Query a device to get its current state. Does not handle LED queries."""
         if hasattr(action, "value"):
             action = action.value
         _LOGGER.debug("Sending query %s, integration %s, action %s",
