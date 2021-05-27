@@ -1,8 +1,8 @@
 # liplib
 
-Interface module for Lutron Integration Protocol (LIP) over Telnet.
+Interface module for Lutron Integration Protocol (LIP) over TCP port 23, or "telnet."
 
-This module connects to a Lutron hub through the Telnet interface which must be enabled through the integration menu in the Lutron mobile app.
+This module connects to a Lutron hub through the telnet interface which for Caseta PRO and Radio Ra2 Select must be enabled through the integration menu in the Lutron mobile app.
 
 Supported bridges / main repeaters / controllers:
 - [Lutron Caseta](http://www.casetawireless.com) Smart Bridge **PRO** (L-BDGPRO2-WH)
