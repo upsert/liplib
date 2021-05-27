@@ -129,7 +129,7 @@ class LipServer:
 
     async def open(self, host, port=23, username=DEFAULT_USER,
                    password=DEFAULT_PASSWORD):
-        """Open a Telnet connection to the bridge."""
+        """Open a telnet connection to the bridge."""
         async with self._read_lock:
             async with self._write_lock:
                 if self._state != LipServer.State.Closed:
@@ -145,8 +145,7 @@ class LipServer:
                 try:
                     connection = await asyncio.open_connection(host, port)
                 except OSError as err:
-                    _LOGGER.warning("Error opening connection"
-                                    " to the bridge: %s", err)
+                    _LOGGER.warning(f"cannot open connection to the bridge: {err}")
                     self._state = LipServer.State.Closed
                     return
 
@@ -165,7 +164,7 @@ class LipServer:
                 self._state = LipServer.State.Opened
 
     async def _read_until(self, value):
-        """Read until a given value is reached."""
+        """Read until a given value is reached. Value may be regex or bytes."""
         while True:
             if hasattr(value, "search"):
                 # detected regular expression
@@ -183,11 +182,11 @@ class LipServer:
             try:
                 read_data = await self.reader.read(LipServer.READ_SIZE)
                 if not len(read_data):
-                    _LOGGER.warning("Empty read from the bridge (clean disconnect)")
+                    _LOGGER.warning("bridge disconnected")
                     return False
                 self._read_buffer += read_data
             except OSError as err:
-                _LOGGER.warning("Error reading from the bridge: %s", err)
+                _LOGGER.warning(f"error reading from the bridge: {err}")
                 return False
 
     async def read(self):
@@ -207,43 +206,41 @@ class LipServer:
                     _LOGGER.warning(f"could not parse {match.group(0)}")
         if match is False:
             # attempt to reconnect
-            _LOGGER.info("Reconnecting to the bridge %s", self._host)
+            _LOGGER.info(f"Reconnecting to the bridge {self._host}")
             self._state = LipServer.State.Closed
             await self.open(self._host, self._port, self._username,
                             self._password)
         return None, None, None, None
 
     async def write(self, mode, integration, action, *args, value=None):
-        """Write a list of values out to the Telnet interface."""
+        """Write a list of values to the bridge."""
         if hasattr(action, "value"):
             action = action.value
         async with self._write_lock:
             if self._state != LipServer.State.Opened:
                 return
-            data = "#{},{},{}".format(mode, integration, action)
+            data = f"#{mode},{integration},{action}"
             if value is not None:
-                data += ",{}".format(value)
+                data += f",{value}"
             for arg in args:
                 if arg is not None:
-                    data += ",{}".format(arg)
+                    data += f",{arg}"
             try:
                 self.writer.write((data + "\r\n").encode("ascii"))
                 await self.writer.drain()
             except OSError as err:
-                _LOGGER.warning("Error writing out to the bridge: %s", err)
+                _LOGGER.warning(f"Error writing to the bridge: {err}")
 
 
     async def query(self, mode, integration, action):
         """Query a device to get its current state. Does not handle LED queries."""
         if hasattr(action, "value"):
             action = action.value
-        _LOGGER.debug("Sending query %s, integration %s, action %s",
-                      mode, integration, action)
+        _LOGGER.debug(f"Sending query {mode}, integration {integration}, action {action}")
         async with self._write_lock:
             if self._state != LipServer.State.Opened:
                 return
-            self.writer.write("?{},{},{}\r\n".format(mode, integration,
-                                                     action).encode())
+            self.writer.write(f"?{mode},{integration},{action}\r\n".encode())
             await self.writer.drain()
 
     async def ping(self):
@@ -255,7 +252,7 @@ class LipServer:
             await self.writer.drain()
 
     async def logout(self):
-        """Logout and sever the connection to the bridge."""
+        """Close the connection to the bridge."""
         async with self._write_lock:
             if self._state != LipServer.State.Opened:
                 return
