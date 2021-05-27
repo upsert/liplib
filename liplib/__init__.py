@@ -81,12 +81,13 @@ class LipServer:
     DEFAULT_USER = b"lutron"
     DEFAULT_PASSWORD = b"integration"
     DEFAULT_PROMPT = b"GNET> "
+    LOGIN_PROMPT = b"login: "
     RESPONSE_RE = re.compile(b"~([A-Z]+),([0-9.]+),([0-9.]+),([0-9.]+)\r\n")
     OUTPUT = "OUTPUT"
     DEVICE = "DEVICE"
 
     class Action(IntEnum):
-        """Action values."""
+        """Action numbers for the OUTPUT command in the Lutron Integration Protocol."""
 
         SET      = 1    # Get or Set Zone Level
         RAISING  = 2    # Start Raising
@@ -96,12 +97,14 @@ class LipServer:
         PRESET   = 6    # SHADEGRP for Homeworks QS
 
     class Button(IntEnum):
-        """Button values."""
+        """Action numbers for the DEVICE command in the Lutron Integration Protocol."""
 
-        PRESS = 3
-        RELEASE = 4
-        HOLD = 5         # not returned by Caseta or Radio Ra 2 Select
-        DOUBLETAP = 6    # not returned by Caseta or Radio Ra 2 Select
+        PRESS     = 3
+        RELEASE   = 4
+        HOLD      = 5   # not returned by Caseta or Radio Ra 2 Select
+        DOUBLETAP = 6   # not returned by Caseta or Radio Ra 2 Select
+
+        LEDSTATE = 9    # "Button" is a misnomer; this queries LED state
 
     class State(IntEnum):
         """Connection state values."""
@@ -141,25 +144,30 @@ class LipServer:
                 self._username = username
                 self._password = password
 
+                def cleanup(err):
+                    _LOGGER.warning(f"error opening connection to Lutron {host}:{port}: {err}")
+                    self._state = LipServer.State.Closed
+
                 # open connection
                 try:
                     connection = await asyncio.open_connection(host, port)
                 except OSError as err:
-                    _LOGGER.warning(f"cannot open connection to the bridge: {err}")
-                    self._state = LipServer.State.Closed
-                    return
+                    return cleanup(err)
 
                 self.reader = connection[0]
                 self.writer = connection[1]
 
                 # do login
-                await self._read_until(b"login: ")
+                if await self._read_until(self.LOGIN_PROMPT) is False:
+                    return cleanup('no login prompt')
                 self.writer.write(username + b"\r\n")
                 await self.writer.drain()
-                await self._read_until(b"password: ")
+                if await self._read_until(b"password: ") is False:
+                    return cleanup('no password prompt')
                 self.writer.write(password + b"\r\n")
                 await self.writer.drain()
-                await self._read_until(self.prompt)
+                if await self._read_until(self.prompt) is False:
+                    return cleanup('login failed')
 
                 self._state = LipServer.State.Opened
 
